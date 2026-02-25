@@ -77,7 +77,7 @@ st.caption("Estrategia Cuántica: SMT, Volumen Institucional, Skew, Bonos, RSI e
 with st.sidebar:
     st.header("Configuración de Riesgo")
     capital = st.number_input("Capital de la cuenta (€)", value=10000.0, step=500.0)
-    agresividad = st.select_slider("Multiplicador de Distancia (Sigma)", options=[1.1, 1.2, 1.3, 1.4, 1.5], value=1.3)
+    agresividad = st.select_slider("Multiplicador de Distancia (Sigma)", options=[1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0], value=2.0)
     btn_analizar = st.button("🚀 INICIAR ESCANEO TOTAL")
 
 if btn_analizar:
