@@ -83,7 +83,7 @@ st.title("🏛️ XSP 0DTE Institutional Terminal v3.5 (Bug Fixed)")
 with st.sidebar:
     st.header("Configuración")
     capital = st.number_input("Capital Cuenta (€)", value=10000.0, step=500.0)
-    agresividad = st.select_slider("Multiplicador Sigma", options=[1.1, 1.2, 1.3, 1.4, 1.5], value=1.3)
+    agresividad = st.select_slider("Multiplicador Sigma", options=[1.1, 1.3, 1.5], value=1.3)
     btn_analizar = st.button("🚀 EJECUTAR ESCANEO")
 
 if btn_analizar:
@@ -137,7 +137,7 @@ if btn_analizar:
         
         st.subheader("⚡ Comparativa de Perfiles y POP")
         niveles = []
-        for sig_mult in [1.1, 1.2, 1.3, 1.4, 1.5]:
+        for sig_mult in [1.1, 1.3, 1.5]:
             dist_t = xsp["actual"] * sigma * sig_mult
             pop = (norm.cdf(sig_mult) - norm.cdf(-sig_mult)) if cond_ic else norm.cdf(sig_mult)
             label = f"Sigma {sig_mult}"
