@@ -46,9 +46,13 @@ def obtener_datos():
     tickers = {
         "XSP": "^XSP", "VIX": "^VIX", "VIX9D": "^VIX9D", 
         "VVIX": "^VVIX", "VIX1D": "^VIX1D", "NDX": "^NDX", 
-        "SPY": "SPY", "SKEW": "^SKEW", "TNX": "^TNX"
+        "SPY": "SPY", "SKEW": "^SKEW", "TNX": "^TNX",
+        "ES_FUT": "ES=F"
     }
     vals = {}
+    ahora_madrid = datetime.now(ZONA_HORARIA).time()
+    mercado_abierto = time(15, 30) <= ahora_madrid <= time(22, 15)
+
     for k, v in tickers.items():
         try:
             df = yf.Ticker(v).history(period="1d", interval="1m")
@@ -71,6 +75,13 @@ def obtener_datos():
                 vals[k] = {"actual": 0.0, "apertura": 0.0, "min": 0.0, "max": 0.0, "vol_actual": 0.0, "vol_avg": 0.0, "rsi": 50.0, "prev_close": 0.0, "hist": pd.Series()}
         except:
             vals[k] = {"actual": 0.0, "apertura": 0.0, "min": 0.0, "max": 0.0, "vol_actual": 0.0, "vol_avg": 0.0, "rsi": 50.0, "prev_close": 0.0, "hist": pd.Series()}
+
+    # LÓGICA HÍBRIDA DE SESGO
+    if not mercado_abierto and vals.get("ES_FUT") and vals["ES_FUT"]["actual"] > 0:
+        vals["XSP"]["hibrido_bias"] = vals["ES_FUT"]["actual"] > vals["ES_FUT"]["apertura"]
+    else:
+        vals["XSP"]["hibrido_bias"] = vals["XSP"]["actual"] > vals["XSP"]["apertura"]
+        
     return vals
 
 # --- INTERFAZ ---
@@ -117,7 +128,6 @@ if btn_analizar:
         st.metric("VIX / VIX1D", f"{vix:.2f} / {vix1d:.2f}")
         st.write(f"**VIX:** {'⚠️ Invertida' if vix_invertido else '✅ Normal'}")
     with c4:
-        # ALERTA DE SKEW VISUAL
         st.metric("SKEW Index", f"{skew:.2f}", delta=skew_msg, delta_color=skew_color)
         st.write(f"**Noticias:** {'🔴 Bloqueo' if noticias['bloqueo'] else '✅ Limpio'}")
 
@@ -127,12 +137,14 @@ if btn_analizar:
     if noticias["bloqueo"] or (vix_invertido and skew > 148):
         st.error("### 🛑 BLOQUEO: Riesgo Crítico en el mercado.")
     else:
-        # Régimen y Bias
+        # Régimen y Bias Híbrido
         std_total, std_rec = xsp["hist"].std(), xsp["hist"].tail(5).std()
         regime = "COMPRESIÓN 📉" if std_rec <= std_total else "EXPANSIÓN 📈"
         rango_pct = abs((xsp["actual"] - xsp["apertura"]) / xsp["apertura"] * 100) if xsp["apertura"] != 0 else 0.0
         cond_ic = (regime == "COMPRESIÓN 📉" and vix < 19 and vol_ratio < 1.2 and rango_pct < 0.40)
-        bias = (xsp["actual"] > xsp["apertura"])
+        
+        # Aplicación del Bias Híbrido
+        bias = xsp["hibrido_bias"]
         if bonos_subiendo: bias = False 
         
         sigma = (vix_ref / 100) / (252**0.5)
@@ -166,7 +178,7 @@ if btn_analizar:
         else:
             st.info(f"### 🎯 RECOMENDACIÓN ({agresividad}σ): {'BULL PUT' if bias else 'BEAR CALL'} | POP: {pop_rec*100:.1f}%")
         
-        st.write(f"**Lotes Sugeridos:** {lotes} | **Info:** {'Usando Histórico' if vix1d == 0 else 'Datos en Vivo ✅'}")
+        st.write(f"**Lotes Sugeridos:** {lotes} | **Info:** {'Híbrido (Futuros)' if (time(9,0) <= ahora < time(15,30)) else 'Datos RTH ✅'}")
 
 else:
     st.info("Introduce capital y analiza para ver niveles de IBKR.")
