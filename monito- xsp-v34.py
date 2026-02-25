@@ -2,6 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+from scipy.stats import norm
 from datetime import datetime, time, date
 import requests
 import pytz
@@ -59,7 +60,7 @@ def obtener_datos():
 
             vals[k] = {
                 "actual": df['Close'].iloc[-1], 
-                "apertura": df['Open'].iloc[0] if not df.empty else 0,
+                "apertura": df['Open'].iloc if not df.empty else 0,
                 "min": df['Low'].min(),
                 "max": df['High'].max(),
                 "vol_actual": df['Volume'].iloc[-1] if 'Volume' in df.columns else 0,
@@ -72,16 +73,17 @@ def obtener_datos():
     return vals
 
 # --- INTERFAZ ---
-st.title("🏛️ XSP 0DTE Institutional Terminal (Niveles por Perfil)")
-st.caption("Estrategia 2026: SMT, Volumen, Bonos y Spreads Verticales por Perfil de Riesgo")
+st.title("🏛️ XSP 0DTE Institutional Terminal (POP Analysis)")
+st.caption("Estrategia 2026: SMT, Volumen, Bonos y Probabilidad de Éxito (POP)")
 
 with st.sidebar:
     st.header("Configuración")
     capital = st.number_input("Capital Cuenta (€)", value=10000.0, step=500.0)
+    agresividad = st.select_slider("Multiplicador de Distancia (Sigma)", options=[1.1, 1.2, 1.3, 1.4, 1.5], value=1.3)
     btn_analizar = st.button("🚀 EJECUTAR ESCANEO TOTAL")
 
 if btn_analizar:
-    with st.spinner("Analizando flujo de órdenes y niveles sigma..."):
+    with st.spinner("Calculando niveles y probabilidades estadísticas..."):
         noticias = check_noticias_tactico(FINNHUB_API_KEY)
         d = obtener_datos()
         ahora = datetime.now(ZONA_HORARIA).time()
@@ -125,45 +127,52 @@ if btn_analizar:
     if noticias["bloqueo"] or (vix_invertido and d["SKEW"]["actual"] > 148):
         st.error("### 🛑 BLOQUEO DE SEGURIDAD: Riesgo Sistémico o Noticia Crítica.")
     else:
-        # Decisión IC vs Vertical
         cond_ic = (regime == "COMPRESIÓN 📉" and vix < 19 and vol_ratio < 1.2 and rango_pct < 0.40)
         bias = (xsp["actual"] > xsp["apertura"])
         if bonos_subiendo or vix_invertido: bias = False
         
-        # --- TABLA DE NIVELES PERSONALIZADA ---
-        st.subheader("⚡ Niveles Operativos sugeridos")
+        # --- TABLA DE NIVELES CON POP ---
+        st.subheader("⚡ Comparativa de Perfiles y Probabilidad (POP)")
         sigma = (vix_ref / 100) / (252**0.5)
         lotes = max(1, int((capital * 0.02) // 200))
         
         niveles = []
-        for sig_mult in [1.1, 1.3, 1.5]:
-            dist = xsp["actual"] * sigma * sig_mult
-            label = "Agresivo (1.1σ)" if sig_mult == 1.1 else "Profesional (1.3σ)" if sig_mult == 1.3 else "Conservador (1.5σ)"
+        for sig_mult in [1.1, 1.2, 1.3, 1.4, 1.5]:
+            dist_tabla = xsp["actual"] * sigma * sig_mult
+            # Cálculo de POP usando Distribución Normal
+            pop = (norm.cdf(sig_mult) - norm.cdf(-sig_mult)) if cond_ic else norm.cdf(sig_mult)
+            pop_pct = f"{pop * 100:.1f}%"
+            
+            label = f"Sigma {sig_mult}"
             
             if cond_ic:
-                v_up, v_down = round(xsp["actual"] + dist), round(xsp["actual"] - dist)
-                niveles.append({
-                    "Perfil": label,
-                    "Estrategia": "IRON CONDOR",
-                    "CALL (V/C)": f"{v_up} / {v_up + 2}",
-                    "PUT (V/C)": f"{v_down} / {v_down - 2}",
-                    "Distancia": f"±{round(dist, 1)} pts"
-                })
+                v_up, v_down = round(xsp["actual"] + dist_tabla), round(xsp["actual"] - dist_tabla)
+                niveles.append({"Perfil": label, "POP Est.": pop_pct, "CALL (V/C)": f"{v_up}/{v_up+2}", "PUT (V/C)": f"{v_down}/{v_down-2}"})
             else:
                 tipo = "BULL PUT" if bias else "BEAR CALL"
-                v = round(xsp["actual"] - dist) if bias else round(xsp["actual"] + dist)
+                v = round(xsp["actual"] - dist_tabla) if bias else round(xsp["actual"] + dist_tabla)
                 c = v - 2 if bias else v + 2
-                niveles.append({
-                    "Perfil": label,
-                    "Estrategia": tipo,
-                    "Vender": v,
-                    "Comprar": c,
-                    "Distancia": f"{round(dist, 1)} pts"
-                })
+                niveles.append({"Perfil": label, "POP Est.": pop_pct, "Estrategia": tipo, "Vender": v, "Comprar": c})
         
         st.table(pd.DataFrame(niveles))
         
-        # Detalles de Confianza
+        # --- RECOMENDACIÓN PERSONALIZADA ---
+        st.divider()
+        dist_rec = xsp["actual"] * sigma * agresividad
+        pop_rec = (norm.cdf(agresividad) - norm.cdf(-agresividad)) if cond_ic else norm.cdf(agresividad)
+        
+        if cond_ic:
+            v_up, v_down = round(xsp["actual"] + dist_rec), round(xsp["actual"] - dist_rec)
+            st.success(f"### 🎯 RECOMENDACIÓN ({agresividad}σ): IRON CONDOR")
+            st.write(f"**CALL:** {v_up}/{v_up+2} | **PUT:** {v_down}/{v_down-2} | **POP:** {pop_rec*100:.1f}%")
+        else:
+            tipo = "BULL PUT" if bias else "BEAR CALL"
+            v = round(xsp["actual"] - dist_rec) if bias else round(xsp["actual"] + dist_rec)
+            c = v - 2 if bias else v + 2
+            st.info(f"### 🎯 RECOMENDACIÓN ({agresividad}σ): {tipo}")
+            st.write(f"**Vender:** {v} | **Comprar:** {c} | **POP:** {pop_rec*100:.1f}%")
+
+        # Puntuación de Confianza
         score = 0
         if vol_ratio > 1.3: score += 1
         if regime == "EXPANSIÓN 📈": score += 1
@@ -171,9 +180,7 @@ if btn_analizar:
         if (bias and xsp["rsi"] < 65) or (not bias and xsp["rsi"] > 35): score += 2
         
         conf_labels = ["EVITAR ❌", "MUY BAJA 📉", "BAJA ⚠️", "MEDIA 🟡", "ALTA ✅", "INSTITUCIONAL 🔥"]
-        st.write(f"**Confianza Técnica:** {conf_labels[score]} | **Lotes Sugeridos:** {lotes}")
-        if not (time(16, 0) < ahora < time(21, 0)):
-            st.warning("⏳ Fuera de la ventana óptima de tiempo (16:00 - 21:00 ES).")
+        st.write(f"**Confianza:** {conf_labels[score]} | **Lotes Sugeridos:** {lotes}")
 
 else:
-    st.info("Introduce capital y ejecuta para ver los strikes de Venta y Compra.")
+    st.info("Introduce capital y ejecuta el análisis.")
