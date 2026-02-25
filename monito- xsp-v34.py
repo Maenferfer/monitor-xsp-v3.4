@@ -23,6 +23,7 @@ def calculate_rsi(series, period=14):
 def check_noticias_tactico(api_key):
     eventos_prohibidos = ["CPI", "FED", "FOMC", "NFP", "POWELL", "PPI", "INTEREST RATE", "JOBLESS"]
     hoy = str(date.today())
+    # CORRECCIÓN DE URL: Se restauró la ruta /api/v1/calendar/economic
     url = f"https://finnhub.io{hoy}&to={hoy}&token={api_key}"
     estado = {"bloqueo": False, "tipo": "NORMAL", "eventos": []}
     try:
@@ -59,7 +60,7 @@ def obtener_datos():
 
             vals[k] = {
                 "actual": df['Close'].iloc[-1], 
-                "apertura": df['Open'].iloc if not df.empty else 0,
+                "apertura": df['Open'].iloc[0] if not df.empty else 0,
                 "min": df['Low'].min(),
                 "max": df['High'].max(),
                 "vol_actual": df['Volume'].iloc[-1] if 'Volume' in df.columns else 0,
@@ -116,6 +117,10 @@ if btn_analizar:
         st.metric("SKEW Index", f"{d['SKEW']['actual']:.2f}")
         st.write(f"**Noticias:** {'🔴 Bloqueo' if noticias['bloqueo'] else '✅ Limpio'}")
 
+    if noticias["eventos"]:
+        for ev in noticias["eventos"]:
+            st.warning(f"Impacto detectado: {ev}")
+
     st.divider()
 
     # --- LÓGICA DE NIVELES COMPARATIVOS ---
@@ -124,7 +129,6 @@ if btn_analizar:
     sigma = (vix_ref / 100) / (252**0.5)
     lotes = max(1, int((capital * 0.02) // 200))
     
-    # Cálculo para 3 perfiles
     niveles = []
     for sig_mult in [1.1, 1.3, 1.5]:
         dist = xsp["actual"] * sigma * sig_mult
@@ -141,7 +145,6 @@ if btn_analizar:
     if noticias["bloqueo"] or (vix_invertido and d["SKEW"]["actual"] > 148):
         st.error("### 🛑 BLOQUEO DE SEGURIDAD: Riesgo Sistémico o Noticia Crítica.")
     else:
-        # Decisión IC vs Vertical
         cond_ic = (regime == "COMPRESIÓN 📉" and vix < 19 and vol_ratio < 1.2 and rango_pct < 0.40)
         
         if cond_ic:
@@ -154,7 +157,6 @@ if btn_analizar:
             tipo = "BULL PUT SPREAD" if bias else "BEAR CALL SPREAD"
             st.info(f"### 🎯 ESTRATEGIA: {tipo}")
             
-            # Puntuación de Confianza
             score = 0
             if vol_ratio > 1.3: score += 1
             if regime == "EXPANSIÓN 📈": score += 1
