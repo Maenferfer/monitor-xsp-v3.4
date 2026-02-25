@@ -59,7 +59,7 @@ def obtener_datos():
 
             vals[k] = {
                 "actual": df['Close'].iloc[-1], 
-                "apertura": df['Open'].iloc[0] if not df.empty else 0,
+                "apertura": df['Open'].iloc if not df.empty else 0,
                 "min": df['Low'].min(),
                 "max": df['High'].max(),
                 "vol_actual": df['Volume'].iloc[-1] if 'Volume' in df.columns else 0,
@@ -71,23 +71,17 @@ def obtener_datos():
         except: vals[k] = {"actual": 0, "apertura": 0, "min": 0, "max": 0, "vol_actual": 0, "vol_avg": 0, "rsi": 50, "prev_close": 0, "hist": pd.Series()}
     return vals
 
-# --- INTERFAZ STREAMLIT ---
-st.title("🏛️ XSP 0DTE Institutional Terminal (All-In-One)")
-st.caption("Filtros: Gamma, SMT, Volatilidad Inversa, Bonos, RSI e Intraday Regime")
-
-# Auto-refresh cada 60 segundos
-if st.sidebar.checkbox("Auto-actualizar (60s)", value=False):
-    st.empty()
-    st.info("Refrescando datos automáticamente...")
+# --- INTERFAZ ---
+st.title("🏛️ XSP 0DTE Institutional Terminal (Triple Tier Levels)")
+st.caption("Estrategia 2026: SMT, Volumen, Bonos, RSI y Tabla de Niveles Comparativa")
 
 with st.sidebar:
-    st.header("Risk Management")
+    st.header("Configuración")
     capital = st.number_input("Capital Cuenta (€)", value=10000.0, step=500.0)
-    agresividad = st.select_slider("Buffer de Seguridad (Sigma)", options=[1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0], value=2.0)
     btn_analizar = st.button("🚀 EJECUTAR ESCANEO TOTAL")
 
 if btn_analizar:
-    with st.spinner("Calculando niveles Gamma y Flujo Institucional..."):
+    with st.spinner("Analizando flujo de órdenes y niveles sigma..."):
         noticias = check_noticias_tactico(FINNHUB_API_KEY)
         d = obtener_datos()
         ahora = datetime.now(ZONA_HORARIA).time()
@@ -96,86 +90,79 @@ if btn_analizar:
         st.error("Error de datos. ¿Está el mercado abierto?")
         st.stop()
 
-    # --- VARIABLES CLAVE ---
+    # --- VARIABLES ---
     xsp, ndx, spy = d["XSP"], d["NDX"], d["SPY"]
     vix, vix1d, vix9d = d["VIX"]["actual"], d["VIX1D"]["actual"], d["VIX9D"]["actual"]
     vix_ref = vix1d if vix1d > 0 else (vix if vix > 0 else 15)
     rango_pct = abs((xsp["actual"] - xsp["apertura"]) / xsp["apertura"] * 100) if xsp["apertura"] != 0 else 0
-    
-    # Análisis de Régimen (Compresión vs Expansión)
     std_reciente = xsp["hist"].tail(15).std()
     regime = "EXPANSIÓN 📈" if std_reciente > xsp["hist"].std() else "COMPRESIÓN 📉"
-
-    # Filtros Institucionales
-    vol_ratio = spy["vol_actual"] / spy["vol_avg"] if spy["vol_avg"] > 0 else 0
     vix_invertido = vix9d > vix
+    vol_ratio = spy["vol_actual"] / spy["vol_avg"] if spy["vol_avg"] > 0 else 0
     bonos_subiendo = d["TNX"]["actual"] > d["TNX"]["prev_close"]
-    
-    # Niveles Gamma (Zero GEX Simulado)
-    move_expected = xsp["actual"] * (vix_ref/100) / (252**0.5)
-    zero_gex = xsp["actual"] - (move_expected * 0.5) if xsp["actual"] > xsp["apertura"] else xsp["actual"] + (move_expected * 0.5)
 
     # --- DASHBOARD ---
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("XSP / RSI", f"{xsp['actual']:.2f}", f"RSI: {xsp['rsi']:.1f}")
+        st.metric("XSP Actual", f"{xsp['actual']:.2f}")
         st.write(f"**Régimen:** {regime}")
     with c2:
-        st.metric("Volumen SPY", f"{vol_ratio:.2f}x", "vs 20m avg")
-        st.write(f"**Zero Gamma:** {zero_gex:.2f}")
+        st.metric("Volumen SPY", f"{vol_ratio:.2f}x")
+        st.write(f"**SMT:** {'ALCISTA 🟢' if xsp['actual'] > xsp['min']*1.002 else 'BAJISTA 🔴'}")
     with c3:
-        st.metric("VIX / VIX9D", f"{vix:.2f} / {vix9d:.2f}")
-        st.write(f"**Estructura:** {'⚠️ INVERTIDA' if vix_invertido else '✅ Normal'}")
+        st.metric("VIX / VIX1D", f"{vix:.2f} / {vix1d:.2f}")
+        st.write(f"**Bonos:** {'⚠️ Presión' if bonos_subiendo else '✅ Ok'}")
     with c4:
         st.metric("SKEW Index", f"{d['SKEW']['actual']:.2f}")
-        st.write(f"**Noticias:** {'🔴 BLOQUEO' if noticias['bloqueo'] else '✅ Limpio'}")
+        st.write(f"**Noticias:** {'🔴 Bloqueo' if noticias['bloqueo'] else '✅ Limpio'}")
 
     st.divider()
 
-    # --- LÓGICA DE TRIPLE DECISIÓN ---
-    st.subheader("⚡ Recomendación Estratégica Alpha")
+    # --- LÓGICA DE NIVELES COMPARATIVOS ---
+    st.subheader("⚡ Tabla Comparativa de Niveles (XSP)")
+    
+    sigma = (vix_ref / 100) / (252**0.5)
+    lotes = max(1, int((capital * 0.02) // 200))
+    
+    # Cálculo para 3 perfiles
+    niveles = []
+    for sig_mult in [1.1, 1.3, 1.5]:
+        dist = xsp["actual"] * sigma * sig_mult
+        niveles.append({
+            "Perfil": "Agresivo (1.1σ)" if sig_mult == 1.1 else "Profesional (1.3σ)" if sig_mult == 1.3 else "Conservador (1.5σ)",
+            "Venta CALL": round(xsp["actual"] + dist),
+            "Venta PUT": round(xsp["actual"] - dist),
+            "Distancia Pts": round(dist, 1)
+        })
+    
+    st.table(pd.DataFrame(niveles))
 
+    # --- RECOMENDACIÓN ESTRATÉGICA ---
     if noticias["bloqueo"] or (vix_invertido and d["SKEW"]["actual"] > 148):
-        st.error("### 🛑 BLOQUEO: No operar. Riesgo sistémico extremadamente alto.")
+        st.error("### 🛑 BLOQUEO DE SEGURIDAD: Riesgo Sistémico o Noticia Crítica.")
     else:
-        sigma = (vix_ref / 100) / (252**0.5)
-        dist = xsp["actual"] * sigma * agresividad
-        lotes = max(1, int((capital * 0.02) // 200))
-
-        # 1. LÓGICA IRON CONDOR (Días de Rango/Compresión)
-        # Se activa si el régimen es compresión, VIX bajo y no hay noticias
-        condicion_ic = (regime == "COMPRESIÓN 📉" and vix < 19 and vol_ratio < 1.1 and rango_pct < 0.35)
-
-        if condicion_ic:
-            v_up, v_down = round(xsp["actual"] + dist), round(xsp["actual"] - dist)
-            st.success("### 🎯 OPERACIÓN: IRON CONDOR (Lateral)")
-            st.write(f"**Call Side:** {v_up} / {v_up+2} | **Put Side:** {v_down} / {v_down-2}")
-            st.info("💡 Justificación: El mercado está en compresión y la volatilidad es estable. Alta probabilidad de que el precio expire en el rango.")
+        # Decisión IC vs Vertical
+        cond_ic = (regime == "COMPRESIÓN 📉" and vix < 19 and vol_ratio < 1.2 and rango_pct < 0.40)
         
+        if cond_ic:
+            st.success(f"### 🎯 ESTRATEGIA: IRON CONDOR (Día Lateral)")
+            st.info(f"Recomendado Perfil **Profesional (1.3σ)** | Lotes: {lotes}")
         else:
-            # 2. LÓGICA DIRECCIONAL (Días de Expansión/Volatilidad)
-            bias_final = (xsp["actual"] > xsp["apertura"])
-            if bonos_subiendo: bias_final = False 
-            if vix_invertido: bias_final = False 
+            bias = (xsp["actual"] > xsp["apertura"])
+            if bonos_subiendo or vix_invertido: bias = False
             
-            tipo = "BULL PUT SPREAD" if bias_final else "BEAR CALL SPREAD"
-            vend = round(xsp["actual"] - dist) if bias_final else round(xsp["actual"] + dist)
-            comp = vend - 2 if bias_final else vend + 2
+            tipo = "BULL PUT SPREAD" if bias else "BEAR CALL SPREAD"
+            st.info(f"### 🎯 ESTRATEGIA: {tipo}")
             
             # Puntuación de Confianza
             score = 0
-            if vol_ratio > 1.2: score += 1
+            if vol_ratio > 1.3: score += 1
             if regime == "EXPANSIÓN 📈": score += 1
             if not bonos_subiendo: score += 1
-            if (bias_final and xsp["rsi"] < 65) or (not bias_final and xsp["rsi"] > 35): score += 2
-
-            st.info(f"### 🎯 OPERACIÓN: {tipo}")
-            st.write(f"**Vender:** {vend} | **Comprar:** {comp} (Tramo 2 pts)")
+            if (bias and xsp["rsi"] < 65) or (not bias and xsp["rsi"] > 35): score += 2
             
             conf_labels = ["EVITAR ❌", "MUY BAJA 📉", "BAJA ⚠️", "MEDIA 🟡", "ALTA ✅", "INSTITUCIONAL 🔥"]
-            st.subheader(f"Nivel de Confianza: {conf_labels[score]}")
-
-        st.write(f"**Gestión de Capital:** Operar con {lotes} contrato(s). Riesgo máximo estimado: {capital*0.02:.2f}€")
+            st.write(f"**Confianza:** {conf_labels[score]} | **Lotes:** {lotes}")
 
 else:
-    st.info("Esperando análisis de mercado... Pulsa el botón para procesar.")
+    st.info("Introduce capital y ejecuta para ver los niveles comparativos.")
