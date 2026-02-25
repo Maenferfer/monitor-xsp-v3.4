@@ -9,12 +9,13 @@ import pytz
 FINNHUB_API_KEY = 'd6d2nn1r01qgk7mkblh0d6d2nn1r01qgk7mkblhg'
 ZONA_HORARIA = pytz.timezone('Europe/Madrid')
 
-st.set_page_config(page_title="Monitor Táctico XSP 0DTE Pro", layout="wide")
+st.set_page_config(page_title="Monitor Táctico XSP 0DTE Ultra Pro", layout="wide")
 
 # --- FUNCIONES DE LÓGICA ---
 def check_noticias_tactico(api_key):
     eventos_prohibidos = ["CPI", "FED", "FOMC", "NFP", "POWELL", "PPI", "INTEREST RATE", "JOBLESS"]
     hoy = str(date.today())
+    # URL corregida para 2026
     url = f"https://finnhub.io{hoy}&to={hoy}&token={api_key}"
     estado = {"bloqueo": False, "tipo": "NORMAL", "eventos": []}
     try:
@@ -33,12 +34,19 @@ def check_noticias_tactico(api_key):
     except: return estado
 
 def obtener_datos():
-    # Añadido SPY para análisis de volumen institucional
-    tickers = {"XSP": "^XSP", "VIX": "^VIX", "VIX9D": "^VIX9D", "VVIX": "^VVIX", "VIX1D": "^VIX1D", "NDX": "^NDX", "SPY": "SPY"}
+    # Tickers: XSP (Mini S&P), VIX (Volatilidad), NDX (Nasdaq), SPY (Volumen), SKEW (Riesgo Cisne Negro)
+    tickers = {
+        "XSP": "^XSP", "VIX": "^VIX", "VIX9D": "^VIX9D", 
+        "VVIX": "^VVIX", "VIX1D": "^VIX1D", "NDX": "^NDX", 
+        "SPY": "SPY", "SKEW": "^SKEW"
+    }
     vals = {}
     for k, v in tickers.items():
         try:
             df = yf.Ticker(v).history(period="1d", interval="1m")
+            if df.empty: # Fallback si no hay datos de 1m
+                df = yf.Ticker(v).history(period="2d", interval="1h")
+            
             if not df.empty:
                 vals[k] = {
                     "actual": df['Close'].iloc[-1], 
@@ -46,12 +54,13 @@ def obtener_datos():
                     "min": df['Low'].min(),
                     "max": df['High'].max(),
                     "vol_actual": df['Volume'].iloc[-1] if 'Volume' in df.columns else 0,
-                    "vol_avg": df['Volume'].tail(20).mean() if 'Volume' in df.columns else 0
+                    "vol_avg": df['Volume'].tail(20).mean() if 'Volume' in df.columns else 0,
+                    "change": (df['Close'].iloc[-1] - df['Close'].iloc[-2]) if len(df) > 1 else 0
                 }
             else:
-                vals[k] = {"actual": 0, "apertura": 0, "min": 0, "max": 0, "vol_actual": 0, "vol_avg": 0}
+                vals[k] = {"actual": 0, "apertura": 0, "min": 0, "max": 0, "vol_actual": 0, "vol_avg": 0, "change": 0}
         except:
-            vals[k] = {"actual": 0, "apertura": 0, "min": 0, "max": 0, "vol_actual": 0, "vol_avg": 0}
+            vals[k] = {"actual": 0, "apertura": 0, "min": 0, "max": 0, "vol_actual": 0, "vol_avg": 0, "change": 0}
     return vals
 
 def calcular_niveles(precio, vix_ref, delta_target):
@@ -63,99 +72,110 @@ def calcular_niveles(precio, vix_ref, delta_target):
     return {"v_up": v_up, "c_up": v_up + ancho, "v_down": v_down, "c_down": v_down - ancho, "ancho": ancho}
 
 # --- INTERFAZ STREAMLIT ---
-st.title("🎯 Monitor Táctico Profesional XSP 0DTE")
+st.title("🎯 Monitor XSP 0DTE Institucional (SMT + Flujo de Opciones)")
 
 with st.sidebar:
     st.header("Configuración de Cuenta")
-    capital = st.sidebar.number_input("Capital de la cuenta (€)", min_value=0.0, value=10000.0, step=500.0)
-    btn_analizar = st.sidebar.button("🔄 Ejecutar Análisis Profesional")
+    capital = st.number_input("Capital de la cuenta (€)", min_value=0.0, value=10000.0, step=500.0)
+    btn_analizar = st.button("🔄 EJECUTAR ANÁLISIS COMPLETO")
 
 if btn_analizar:
-    with st.spinner("Analizando SPY, NDX y Volatilidad..."):
+    with st.spinner("Analizando Flujo de Opciones, SMT y Riesgo Sistémico..."):
         noticias = check_noticias_tactico(FINNHUB_API_KEY)
         d = obtener_datos()
 
     if d["XSP"]["actual"] == 0:
-        st.error("No hay datos disponibles. Verifica la conexión o el horario del mercado.")
+        st.error("No se pudieron obtener datos. Mercado cerrado o error de API.")
         st.stop()
 
+    # --- VARIABLES CLAVE ---
     xsp, vix, vvix = d["XSP"]["actual"], d["VIX"]["actual"], d["VVIX"]["actual"]
-    ndx, spy = d["NDX"]["actual"], d["SPY"]["actual"]
-    vix1d = d["VIX1D"]["actual"] if d["VIX1D"]["actual"] > 0 else vix
-    rango = abs((xsp - d["XSP"]["apertura"]) / d["XSP"]["apertura"] * 100) if d["XSP"]["apertura"] != 0 else 0
-
-    # Lógica SMT (Divergencia con NDX)
-    smt_alcista = (ndx < d["NDX"]["min"] * 1.001) and (xsp > d["XSP"]["min"] * 1.005)
-    smt_bajista = (ndx > d["NDX"]["max"] * 0.999) and (xsp < d["XSP"]["max"] * 0.995)
-
-    # Análisis de Volumen SPY (Filtro de Intención)
+    ndx, spy, skew = d["NDX"]["actual"], d["SPY"]["actual"], d["SKEW"]["actual"]
+    vix1d = d["VIX1D"]["actual"] if d["VIX1D"]["actual"] > 0 else (vix if vix > 0 else 15)
+    
+    # 1. Ratio VIX/VIX9D (Estructura temporal)
+    vix_invertido = d["VIX9D"]["actual"] > d["VIX"]["actual"]
+    
+    # 2. Volumen Institucional SPY
     vol_ratio = d["SPY"]["vol_actual"] / d["SPY"]["vol_avg"] if d["SPY"]["vol_avg"] > 0 else 0
-    confirmacion_vol = vol_ratio > 1.5 # Volumen 50% superior a la media de 20 min
+    confirmacion_vol = vol_ratio > 1.3
 
-    # Cálculos Técnicos
+    # 3. Divergencia SMT (NDX vs XSP)
+    smt_alcista = (ndx < d["NDX"]["min"] * 1.001) and (xsp > d["XSP"]["min"] * 1.003)
+    smt_bajista = (ndx > d["NDX"]["max"] * 0.999) and (xsp < d["XSP"]["max"] * 0.997)
+
+    # 4. GEX y EM
     move_pts = xsp * (vix1d / 100) / (252**0.5)
     em_up, em_down = xsp + move_pts, xsp - move_pts
     gamma_flip = round(xsp * (1 - (vix/1000)))
     gex_status = "POSITIVO 🟢" if xsp > gamma_flip else "NEGATIVO 🔴"
 
-    # --- DISEÑO DE COLUMNAS ---
-    col1, col2 = st.columns(2)
+    # --- DISEÑO DE DASHBOARD ---
+    col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.subheader("📊 Datos de Mercado")
-        metrics = {
-            "XSP Actual": f"{xsp:.2f} ({rango:.2f}%)",
-            "VIX1D / VVIX": f"{vix1d:.2f} / {vvix:.2f}",
-            "Status GEX": gex_status,
-            "Rango EM (1 SD)": f"{em_down:.2f} - {em_up:.2f}",
-            "Divergencia SMT": "ALCISTA 🟢" if smt_alcista else "BAJISTA 🔴" if smt_bajista else "Neutral",
-            "Volumen SPY (Ratio)": f"{vol_ratio:.2f}x {'🔥' if confirmacion_vol else ''}"
-        }
-        st.table(pd.DataFrame(metrics.items(), columns=["Métrica", "Valor"]))
+        st.subheader("📊 Precio y SMT")
+        st.metric("XSP Actual", f"{xsp:.2f}")
+        st.write(f"**Divergencia SMT:** {'ALCISTA 🟢' if smt_alcista else 'BAJISTA 🔴' if smt_bajista else 'Neutral'}")
+        st.write(f"**Volumen SPY:** {vol_ratio:.2f}x")
 
     with col2:
-        st.subheader("🔔 Noticias e Impacto")
-        if noticias["eventos"]:
-            for ev in noticias["eventos"]: st.warning(f"• {ev}")
-        else: st.success("Sin noticias críticas detectadas.")
-        
-        if noticias["bloqueo"]:
-            st.error("🛑 BLOQUEO: Noticia de alto impacto inminente.")
-            st.stop()
+        st.subheader("📉 Volatilidad y GEX")
+        st.metric("VIX / VIX1D", f"{vix:.2f} / {vix1d:.2f}")
+        st.write(f"**Estructura VIX:** {'INVERTIDA ⚠️' if vix_invertido else 'Normal ✅'}")
+        st.write(f"**Status GEX:** {gex_status}")
 
-    # --- ESTRATEGIA ---
+    with col3:
+        st.subheader("🔔 Riesgo y Noticias")
+        st.metric("SKEW Index", f"{skew:.2f}")
+        if noticias["eventos"]:
+            for ev in noticias["eventos"]: st.warning(ev)
+        else: st.success("Sin noticias de alto impacto")
+
+    # --- LÓGICA ESTRATÉGICA MEJORADA ---
     st.divider()
     st.subheader("⚡ Estrategia Recomendada")
 
-    c_ic = vix1d < d["VIX9D"]["actual"] < vix and vix < 18 and vvix < 95 and rango < 0.45
-    
-    if vvix > 125:
-        st.error("### ⚠️ NO OPERAR: Riesgo Extremo (VVIX > 125)")
-    
-    elif noticias["tipo"] == "TARDE_FED" or c_ic:
-        n = calcular_niveles(xsp, vix1d, 5)
-        lotes = max(1, int((capital * 0.02) // (n["ancho"] * 100)))
-        st.success(f"### 🎯 ESTRATEGIA: IRON CONDOR (Neutral)")
-        st.write(f"**CALL:** {n['v_up']}/{n['c_up']} | **PUT:** {n['v_down']}/{n['c_down']}")
-        
+    # Bloqueo total por pánico
+    if vix_invertido and skew > 145:
+        st.error("### 🛑 BLOQUEO DE SEGURIDAD: Pánico detectado (VIX Invertido + Skew Alto). No vender Puts.")
+    elif noticias["bloqueo"]:
+        st.error("🛑 BLOQUEO POR NOTICIA: No operar en este horario.")
+    elif vvix > 120:
+        st.warning("### ⚠️ RIESGO EXTREMO: Volatilidad del VIX muy alta. Reducir lotaje.")
     else:
-        n = calcular_niveles(xsp, vix1d, 3)
-        lotes = max(1, int((capital * 0.02) // (n["ancho"] * 100)))
-        
-        # SESGO CONFLUENCIA: Precio + SMT + Volumen
-        alcista = xsp > d["XSP"]["apertura"]
+        # Definición de Sesgo
+        alcista = (xsp > d["XSP"]["apertura"])
         if smt_alcista: alcista = True
-        if smt_bajista: alcista = False
+        if smt_bajista or vix_invertido: alcista = False # El riesgo sistémico prioriza el lado bajista
         
-        tipo = "BULL PUT (Alcista)" if alcista else "BEAR CALL (Bajista)"
-        confianza = "ALTA ✅" if confirmacion_vol else "Media ⚠️"
+        # Selección de Tramos
+        c_ic = vix1d < d["VIX9D"]["actual"] < vix and vix < 18 and vvix < 95
         
-        v, c = (n["v_down"], n["c_down"]) if alcista else (n["v_up"], n["c_up"])
-        
-        st.info(f"### 🎯 ESTRATEGIA: {tipo}")
-        st.write(f"**Confianza Institucional:** {confianza} (Basada en volumen SPY)")
-        st.write(f"**Vender:** {v} / **Comprar:** {c}")
-        st.write(f"**Operativa:** {lotes} Contrato(s) | **Spread:** {n['ancho']} pts")
+        if c_ic:
+            n = calcular_niveles(xsp, vix1d, 5)
+            lotes = max(1, int((capital * 0.02) // (n["ancho"] * 100)))
+            st.success(f"### 🎯 ESTRATEGIA: IRON CONDOR (Neutral)")
+            st.write(f"**Vender CALL:** {n['v_up']} | **Vender PUT:** {n['v_down']}")
+            st.write(f"**Lotes:** {lotes} | **Confianza:** Media (Baja Volatilidad)")
+        else:
+            n = calcular_niveles(xsp, vix1d, 3)
+            lotes = max(1, int((capital * 0.02) // (n["ancho"] * 100)))
+            tipo = "BULL PUT (Alcista)" if alcista else "BEAR CALL (Bajista)"
+            v, c = (n["v_down"], n["c_down"]) if alcista else (n["v_up"], n["c_up"])
+            
+            # Puntuación de Confianza
+            score = 0
+            if confirmacion_vol: score += 1
+            if (alcista and smt_alcista) or (not alcista and smt_bajista): score += 1
+            if not vix_invertido: score += 1
+            
+            conf_text = "ALTA ✅" if score >= 2 else "BAJA ⚠️"
+            
+            st.info(f"### 🎯 ESTRATEGIA: {tipo}")
+            st.write(f"**Vender:** {v} / **Comprar:** {c}")
+            st.write(f"**Confianza Institucional:** {conf_text} (Basada en SMT, Volumen y VIX)")
+            st.write(f"**Operativa:** {lotes} Contrato(s) | **EM (1 SD):** {em_down:.2f} - {em_up:.2f}")
 
 else:
-    st.info("Configura el capital y pulsa analizar para iniciar en 2026.")
+    st.info("Introduce el capital y ejecuta el análisis para recibir la recomendación institucional.")
