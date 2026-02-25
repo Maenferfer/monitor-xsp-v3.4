@@ -84,7 +84,7 @@ st.caption("Filtros 2026: SMT, Volumen Institucional, Skew, Bonos, RSI y Cálcul
 with st.sidebar:
     st.header("Configuración")
     capital = st.number_input("Capital Cuenta (€)", value=10000.0, step=500.0)
-    agresividad = st.select_slider("Multiplicador Sigma (Bias Personal)", options=[1.1, 1.2, 1.3, 1.4, 1.5], value=1.3)
+    agresividad = st.select_slider("Multiplicador Sigma (Bias Personal)", options=[1.1, 1.3, 1.5], value=1.3)
     btn_analizar = st.button("🚀 EJECUTAR ESCANEO TOTAL")
 
 if btn_analizar:
@@ -146,7 +146,7 @@ if btn_analizar:
         
         st.subheader("⚡ Tabla de Niveles, POP y Prima Estimada")
         niveles = []
-        for sig_mult in [1.1, 1.2, 1.3, 1.4, 1.5]:
+        for sig_mult in [1.1, 1.3, 1.5]:
             dist_t = xsp["actual"] * sigma * sig_mult
             pop = (norm.cdf(sig_mult) - norm.cdf(-sig_mult)) if cond_ic else norm.cdf(sig_mult)
             # Estimación de Prima (Crédito estimado por spread de 2 pts)
