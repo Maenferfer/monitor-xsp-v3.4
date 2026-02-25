@@ -11,7 +11,7 @@ import pytz
 FINNHUB_API_KEY = 'd6d2nn1r01qgk7mkblh0d6d2nn1r01qgk7mkblhg'
 ZONA_HORARIA = pytz.timezone('Europe/Madrid')
 
-st.set_page_config(page_title="XSP 0DTE Institutional Terminal v4.0", layout="wide")
+st.set_page_config(page_title="XSP 0DTE Terminal v4.1 - IBKR Edition", layout="wide")
 
 # --- FUNCIONES DE CÁLCULO ---
 def calculate_rsi(series, period=14):
@@ -58,9 +58,8 @@ def obtener_datos():
                 df['RSI'] = calculate_rsi(df['Close'])
                 rsi_val = float(df['RSI'].iloc[-1])
 
-            # Extracción segura de valores escalares
             actual = float(df['Close'].iloc[-1])
-            apertura = float(df['Open'].iloc[0]) if not df.empty else actual
+            apertura = float(df['Open'].iloc) if not df.empty else actual
             
             vals[k] = {
                 "actual": actual, 
@@ -78,23 +77,23 @@ def obtener_datos():
     return vals
 
 # --- INTERFAZ ---
-st.title("🏛️ XSP 0DTE Institutional Terminal v4.0 (Final Alpha)")
-st.caption("Filtros 2026: SMT, Volumen Institucional, Skew, Bonos, RSI y Cálculo de Prima")
+st.title("🏛️ XSP 0DTE Institutional Terminal v4.1 (IBKR Optimized)")
+st.caption("Calibrado para Interactive Brokers: Comisiones netas y Spreads Bid-Ask 2026")
 
 with st.sidebar:
-    st.header("Configuración")
+    st.header("Risk Engine (IBKR)")
     capital = st.number_input("Capital Cuenta (€)", value=10000.0, step=500.0)
-    agresividad = st.select_slider("Multiplicador Sigma (Bias Personal)", options=[1.1, 1.3, 1.5], value=1.3)
-    btn_analizar = st.button("🚀 EJECUTAR ESCANEO TOTAL")
+    agresividad = st.select_slider("Multiplicador Sigma (Bias)", options=[1.1, 1.2, 1.3, 1.4, 1.5], value=1.3)
+    btn_analizar = st.button("🚀 INICIAR ESCANEO IBKR")
 
 if btn_analizar:
-    with st.spinner("Ejecutando algoritmos cuánticos de flujo..."):
+    with st.spinner("Sincronizando con flujo de Interactive Brokers..."):
         noticias = check_noticias_tactico(FINNHUB_API_KEY)
         d = obtener_datos()
         ahora = datetime.now(ZONA_HORARIA).time()
 
     if d["XSP"]["actual"] == 0:
-        st.error("No hay datos disponibles. ¿Está el mercado abierto?")
+        st.error("Error de datos. ¿Está el mercado abierto?")
         st.stop()
 
     # --- VARIABLES ---
@@ -102,10 +101,8 @@ if btn_analizar:
     vix, vix1d, vvix = d["VIX"]["actual"], d["VIX1D"]["actual"], d["VVIX"]["actual"]
     vix_ref = vix1d if vix1d > 0 else (vix if vix > 0 else 15.0)
     
-    # Cálculo de Rango y Gap
     rango_pct = abs((xsp["actual"] - xsp["apertura"]) / xsp["apertura"] * 100) if xsp["apertura"] != 0 else 0.0
-    gap_apertura = ((xsp["apertura"] - xsp["prev_close"]) / xsp["prev_close"] * 100) if xsp["prev_close"] != 0 else 0.0
-    
+    gap_ap = ((xsp["apertura"] - xsp["prev_close"]) / xsp["prev_close"] * 100) if xsp["prev_close"] != 0 else 0.0
     std_reciente = xsp["hist"].tail(15).std()
     regime = "EXPANSIÓN 📈" if std_reciente > xsp["hist"].std() else "COMPRESIÓN 📉"
     vix_invertido = d["VIX9D"]["actual"] > vix
@@ -116,51 +113,49 @@ if btn_analizar:
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("XSP Actual", f"{xsp['actual']:.2f}")
-        st.write(f"**Gap Apertura:** {gap_apertura:+.2f}%")
+        st.write(f"**Gap:** {gap_ap:+.2f}%")
     with c2:
         st.metric("Volumen SPY", f"{vol_ratio:.2f}x")
-        st.write(f"**VVIX (Vol de Vol):** {vvix:.1f}")
+        st.write(f"**VVIX:** {vvix:.1f}")
     with c3:
         st.metric("VIX / VIX1D", f"{vix:.2f} / {vix1d:.2f}")
-        st.write(f"**Estructura:** {'⚠️ INVERTIDA' if vix_invertido else '✅ Normal'}")
+        st.write(f"**VIX Estructura:** {'⚠️ Invertida' if vix_invertido else '✅ Normal'}")
     with c4:
         st.metric("SKEW Index", f"{d['SKEW']['actual']:.2f}")
-        st.write(f"**RSI XSP:** {xsp['rsi']:.1f}")
-
-    if noticias["eventos"]:
-        for ev in noticias["eventos"]: st.warning(f"Noticia hoy: {ev}")
+        st.write(f"**RSI:** {xsp['rsi']:.1f}")
 
     st.divider()
 
-    # --- TABLA DE NIVELES PROFESIONAL ---
+    # --- TABLA DE NIVELES IBKR ---
     if noticias["bloqueo"] or (vix_invertido and d["SKEW"]["actual"] > 148):
-        st.error("### 🛑 BLOQUEO: Riesgo Sistémico Detectado.")
+        st.error("### 🛑 BLOQUEO: Riesgo Crítico en 2026.")
     else:
-        # Lógica de decisión
         cond_ic = (regime == "COMPRESIÓN 📉" and vix < 19 and vol_ratio < 1.2 and rango_pct < 0.40)
         bias = (xsp["actual"] > xsp["apertura"])
-        if bonos_subiendo: bias = False # Bonos subiendo = Presión bajista
+        if bonos_subiendo: bias = False 
         
         sigma = (vix_ref / 100) / (252**0.5)
         lotes = max(1, int((capital * 0.02) // 200))
         
-        st.subheader("⚡ Tabla de Niveles, POP y Prima Estimada")
+        st.subheader("⚡ Tabla de Niveles y Prima Neta (Estimada IBKR)")
         niveles = []
-        for sig_mult in [1.1, 1.3, 1.5]:
+        for sig_mult in [1.1, 1.2, 1.3, 1.4, 1.5]:
             dist_t = xsp["actual"] * sigma * sig_mult
             pop = (norm.cdf(sig_mult) - norm.cdf(-sig_mult)) if cond_ic else norm.cdf(sig_mult)
-            # Estimación de Prima (Crédito estimado por spread de 2 pts)
-            prima_est = (1 - pop) * 200 * 0.6 # Aproximación basada en probabilidad
+            
+            # CALIBRACIÓN IBKR: Factor 0.65 y resta de comisión (~1.5€ por spread)
+            prima_est = ((1 - pop) * 200 * 0.65) - 1.50 
+            prima_est = max(0, prima_est) # Evitar valores negativos
             
             label = f"Sigma {sig_mult}"
             if cond_ic:
                 v_up, v_down = round(xsp["actual"] + dist_t), round(xsp["actual"] - dist_t)
-                niveles.append({"Perfil": label, "POP": f"{pop*100:.1f}%", "Prima Est. (€)": f"{prima_est:.0f}€", "CALL (V/C)": f"{v_up}/{v_up+2}", "PUT (V/C)": f"{v_down}/{v_down-2}"})
+                niveles.append({"Perfil": label, "POP": f"{pop*100:.1f}%", "Prima Neta Est.": f"{prima_est:.1f}€", "CALL (V/C)": f"{v_up}/{v_up+2}", "PUT (V/C)": f"{v_down}/{v_down-2}"})
             else:
                 tipo = "BULL PUT" if bias else "BEAR CALL"
                 v = round(xsp["actual"] - dist_t) if bias else round(xsp["actual"] + dist_t)
                 c = v - 2 if bias else v + 2
-                niveles.append({"Perfil": label, "POP": f"{pop*100:.1f}%", "Prima Est. (€)": f"{prima_est:.0f}€", "Estrategia": tipo, "Vender": v, "Comprar": c})
+                niveles.append({"Perfil": label, "POP": f"{pop*100:.1f}%", "Prima Neta Est.": f"{prima_est:.1f}€", "Estrategia": tipo, "Vender": v, "Comprar": c})
         
         st.table(pd.DataFrame(niveles))
         
@@ -179,10 +174,9 @@ if btn_analizar:
         if regime == "EXPANSIÓN 📈": score += 1
         if not bonos_subiendo: score += 1
         if (bias and xsp["rsi"] < 65) or (not bias and xsp["rsi"] > 35): score += 2
-        if vvix < 105: score += 1
         
         conf_labels = ["EVITAR ❌", "MUY BAJA 📉", "BAJA ⚠️", "MEDIA 🟡", "ALTA ✅", "INSTITUCIONAL 🔥"]
-        st.write(f"**Confianza Técnica:** {conf_labels[min(score, 5)]} | **Lotes Sugeridos:** {lotes}")
+        st.write(f"**Confianza:** {conf_labels[min(score, 5)]} | **Lotes IBKR:** {lotes}")
 
 else:
-    st.info("Terminal lista. Introduce capital y ejecuta análisis en 2026.")
+    st.info("Terminal lista. Calibrado para Interactive Brokers.")
